@@ -1,0 +1,8 @@
+# cache files
+__pycache__
+
+# virutal environment files
+product_venv
+
+# configuration and environment files
+.env
