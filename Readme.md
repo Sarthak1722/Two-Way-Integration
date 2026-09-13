@@ -1,96 +1,469 @@
-# Two-Way Integration App
+# Two-Way Real-Time Data Integration Platform
 
-This FastAPI-based application facilitates two-way integration between your product's customer catalog and external systems like Stripe. It uses Docker containers for MySQL and Kafka and provides a seamless data synchronization mechanism.
+> **An event-driven integration platform for synchronizing an internal customer database with Stripe in both directions.**
 
-## Getting Started
+This project demonstrates a reliable, asynchronous approach to third-party data synchronization using **FastAPI, Kafka, MySQL, and Stripe webhooks**.
 
-Follow these steps to set up and run the application on your local system:
+The core design separates API request handling from downstream integration work, while using **event-driven processing, HMAC verification, and idempotency** to make synchronization safer and more resilient.
 
-1. Clone this repository:
-    ```shell
-    git clone https://github.com/atul-007/zenskar.git
-    ```
+---
 
-2. Create a .env file in the root directory of the project and fill in the required environment variables:
-    ```shell
-    DB_HOST=<database-host>
-    DB_ROOT_PASSWORD=<root-password>
-    DB_DATABASE=<database-name>
-    DB_USER=<database-user>
-    DB_PASSWORD=<database-password>
-    DB_PORT=<database-port>
-    KAFKA_TO_STRIPE_TOPIC=<kafka-topic>
-    STRIPE_SECRET_KEY=<stripe-secret-key>
-    STRIPE_WEBHOOK_SIGNING_KEY=<stripe-webhook-signing-key>
-    NGROK_SECRET_KEY=<ngrok-secret-key>
-    ```
-- DB_HOST: Hostname or IP address of the database server.
-- DB_ROOT_PASSWORD: Root user password for the database.
-- DB_DATABASE: Name of the database.
-- DB_USER: Username for the database.
-- DB_PASSWORD: Password for the database user.
-- DB_PORT: Port on which the database is running.
-- KAFKA_TO_STRIPE_TOPIC: Kafka topic for communication with Stripe.
-- STRIPE_SECRET_KEY: Stripe secret key obtained from your Stripe account.
-- STRIPE_WEBHOOK_SIGNING_KEY: Signing key for Stripe webhook.
-- NGROK_SECRET_KEY: Ngrok secret key obtained from the Ngrok dashboard.
-
-Note: DB_HOST should be set to localhost, and you can choose any non-root value for DB_USER. Create accounts on ngrok and stripe. Create a fake webhook on stripe and copy the signing key. Get access to stripe secret key at [STRIPE SECRET KEY](https://dashboard.stripe.com/test/apikeys) and to ngrok secret key at [NGROK SECRET KEY](https://dashboard.ngrok.com/get-started/your-authtoken).
-
-3.  Start the Docker containers using the following command:
-    ```shell
-    docker-compose up --build
-    ```
-
-4.  Once the containers are running, navigate to the app directory and install the required Python packages:
-    ```shell
-    cd app
-    pip install -r requirements.txt
-    ```
-
-5.  Start the FastAPi application:
-    ```shell
-    python app.py
-    ```
-
-6. After the app starts, go to the [Ngrok dashboard](https://dashboard.ngrok.com/cloud-edge/endpoints), copy the Ngrok URL, and update the fake Stripe webhook with [ngrok-endpoint]/webhook/stripe.
-
-7. You are now ready to add or delete customers from both Stripe and your application. Use the following API endpoints:
-    - To add a customer using the API, send a POST request to http://localhost:5000/customer with JSON containing the customer's email and name.
-    - To delete a customer using the API, send a DELETE request to http://localhost:5000/customer/[:id].
-    - To view all customers, send a GET request to http://localhost:5000/customers.
+## Architecture
+<img width="1500" height="760" alt="architecture(1)" src="https://github.com/user-attachments/assets/592c9c1c-71a7-46ac-a1e4-41e3391b38ed" />
 
 
 
+### High-Level Flow
 
+The platform supports synchronization in both directions:
 
-## Future Plans
+```text
+                 INTERNAL SYSTEM
+                       │
+                       │ Customer Change
+                       ▼
+                  ┌─────────┐
+                  │ FastAPI │
+                  └────┬────┘
+                       │
+                Store + Publish
+                       │
+                       ▼
+                 ┌───────────┐
+                 │   Kafka   │
+                 └─────┬─────┘
+                       │
+                       ▼
+              ┌─────────────────┐
+              │ Stripe Consumer │
+              └────────┬────────┘
+                       │
+                       ▼
+                    Stripe
+                       │
+                  Webhook Event
+                       │
+                       ▼
+                 ┌───────────┐
+                 │   Kafka   │
+                 └─────┬─────┘
+                       │
+                       ▼
+              ┌─────────────────┐
+              │ Webhook Consumer│
+              └────────┬────────┘
+                       │
+                       ▼
+                    MySQL
+```
 
-### Salesforce Integration
+---
 
-The following lays down plan to integrate with Salesforce.
+## The Problem
 
-#### Implementation
+Integrating an internal customer database directly with an external payment platform creates tight coupling between the internal API and the external provider.
 
-- **Directory Structure**: In our project, we will create a new directory within integrations named salesforce. Inside this directory, we will have two main files:
-  - salesforce_integrations.py: This file will contain the necessary SDK functions to interact with Salesforce, such as creating and deleting customer records.
-  - salesforce_webhooks.py: Similar to the Stripe integration, this file will handle incoming webhooks from Salesforce. These webhooks will trigger corresponding database functions to reflect changes in Salesforce within the application.
+A synchronous design can look like:
 
-#### Usage
+```text
+Client → API → MySQL → Stripe → Response
+```
 
-- **API Integration**: When specific APIs are called within the  application (e.g., creating a customer), will trigger calls to the Salesforce SDK to ensure that customer data is also synchronized with Salesforce.
+This means the API request becomes dependent on the availability and response time of Stripe.
 
-- **Webhook Handling**: The Salesforce webhooks will interact with the database functions to make corresponding changes in the database when Salesforce data changes. This ensures that the customer catalog remains consistent.
+This project instead introduces Kafka between the internal application and external integration:
 
-### Extending Customer Catalog to Invoice Catalog
+```text
+Client → FastAPI → MySQL
+                    │
+                    ▼
+                  Kafka
+                    │
+                    ▼
+             Stripe Consumer
+                    │
+                    ▼
+                  Stripe
+```
 
-The following lays down plan on how to extend to customer catalog, to maybe invoice catalog, or others.
+Stripe changes are handled in the reverse direction through webhooks:
 
-#### Implementation
+```text
+Stripe → Webhook → Kafka → Consumer → MySQL
+```
 
-- **Database Functions**: Will introduce additional database functions designed to handle changes in the invoice catalog. These functions will facilitate the creation, modification, and deletion of invoices.
+This creates a **two-way, event-driven synchronization pipeline**.
 
-- **API and Webhook Utilization**: The same set of database functions can be utilized through both FastAPI  and webhooks to make necessary changes in the database. For example, creating an invoice can be triggered via API, which will then interact with the relevant database function to create the invoice record.
+---
 
+## Key Engineering Decisions
 
+### 1. Asynchronous Integration with Kafka
 
+The API stores the internal state and publishes an event to Kafka rather than waiting for the Stripe operation to complete.
+
+This provides a clean boundary between:
+
+- Request processing
+- Database persistence
+- Event publishing
+- Third-party API communication
+
+The Stripe integration can therefore process events independently from the API request lifecycle.
+
+---
+
+### 2. Two-Way Synchronization
+
+The platform handles changes originating from either side.
+
+**Internal → Stripe**
+
+```text
+Internal Customer DB
+        │
+        ▼
+     FastAPI
+        │
+        ▼
+      Kafka
+        │
+        ▼
+Stripe Consumer
+        │
+        ▼
+     Stripe
+```
+
+**Stripe → Internal**
+
+```text
+Stripe
+   │
+   ▼
+Webhook
+   │
+   ▼
+Kafka
+   │
+   ▼
+Webhook Consumer
+   │
+   ▼
+MySQL
+```
+
+This makes the architecture extensible to additional integrations and event types.
+
+---
+
+### 3. Stripe Webhook Security
+
+Incoming Stripe webhooks are verified using **HMAC-based signature verification** before the event is processed.
+
+```text
+Stripe Webhook
+      │
+      ▼
+Signature Verification
+      │
+   ┌──┴──┐
+   │     │
+Valid   Invalid
+ │        │
+ ▼        ▼
+Kafka    Reject
+```
+
+This prevents unverified webhook payloads from entering the processing pipeline.
+
+---
+
+### 4. Idempotent Event Processing
+
+Distributed event processing can encounter duplicate deliveries.
+
+The system uses **event IDs / processed-event tracking** to ensure that an already-processed event is not applied again.
+
+Conceptually:
+
+```text
+Incoming Event
+      │
+      ▼
+ Is Event ID
+ Already Processed?
+    │          │
+   Yes         No
+    │           │
+ Ignore      Process
+                │
+                ▼
+        Mark Event Processed
+```
+
+This is particularly important for webhook-driven systems where duplicate event delivery must be handled safely.
+
+---
+
+## Why Kafka?
+
+Kafka acts as the event backbone between the API, integration consumers, and webhook processing.
+
+### Benefits
+
+- **Decoupling** — API requests are separated from downstream Stripe operations.
+- **Asynchronous processing** — external API calls happen outside the request path.
+- **Independent consumers** — different event types can be handled by dedicated consumers.
+- **Extensibility** — new integrations can consume relevant events without redesigning the API.
+- **Fault isolation** — temporary downstream issues do not require the API layer to directly manage the entire integration flow.
+
+The project uses separate Kafka topics based on event type, with dedicated consumers for processing.
+
+---
+
+## Data Flow
+
+### Internal Customer → Stripe
+
+```text
+1. Client sends customer data
+          ↓
+2. FastAPI validates request
+          ↓
+3. Data is persisted in MySQL
+          ↓
+4. Event is published to Kafka
+          ↓
+5. Stripe consumer receives event
+          ↓
+6. Consumer synchronizes data with Stripe
+```
+
+### Stripe → Internal Customer Database
+
+```text
+1. Stripe generates an event
+          ↓
+2. Stripe sends webhook
+          ↓
+3. Webhook signature is verified
+          ↓
+4. Event is published to Kafka
+          ↓
+5. Webhook consumer receives event
+          ↓
+6. Event ID is checked for idempotency
+          ↓
+7. MySQL is updated
+```
+
+---
+
+## Technology Stack
+
+| Layer | Technology |
+|---|---|
+| API | **FastAPI** |
+| Language | **Python** |
+| Event Streaming | **Apache Kafka** |
+| Database | **MySQL** |
+| External Integration | **Stripe API** |
+| Webhook Security | **HMAC Signature Verification** |
+| Containerization | **Docker Compose** |
+| Local Webhook Tunneling | **ngrok** |
+
+---
+
+## Project Structure
+
+```text
+two-way-integration/
+│
+├── api/
+│   ├── routes/              # API endpoints
+│   ├── services/            # Application/business logic
+│   └── ...
+│
+├── consumers/
+│   ├── stripe/              # Internal → Stripe processing
+│   └── webhook/             # Stripe → Internal processing
+│
+├── kafka/
+│   ├── producers/
+│   └── consumers/
+│
+├── database/
+│   └── ...
+│
+├── docker-compose.yml
+├── .env.example
+└── README.md
+```
+
+> Adapt the structure above to the exact directories in the repository if your implementation uses different names.
+
+---
+
+## API Design
+
+The API layer is responsible for validating incoming requests, persisting internal state, and publishing integration events.
+
+A typical flow is:
+
+```http
+POST /customers
+```
+
+```json
+{
+  "name": "John Doe",
+  "email": "john@example.com"
+}
+```
+
+The request is handled by FastAPI, stored in MySQL, and propagated asynchronously through Kafka.
+
+---
+
+## Local Development
+
+### Prerequisites
+
+- Python
+- Docker
+- Docker Compose
+- Kafka
+- MySQL
+- Stripe account / API credentials
+- ngrok for local webhook testing
+
+### Setup
+
+```bash
+git clone <your-repository-url>
+cd two-way-integration
+```
+
+Create the environment file:
+
+```bash
+cp .env.example .env
+```
+
+Configure the required database, Kafka, Stripe, and webhook settings.
+
+Start the infrastructure:
+
+```bash
+docker compose up -d
+```
+
+Run the FastAPI application and consumers according to the repository's entry points.
+
+---
+
+## Reliability Considerations
+
+The architecture explicitly addresses several failure modes common in integration systems.
+
+### Duplicate Events
+
+Handled using event IDs and processed-event tracking.
+
+### Untrusted Webhooks
+
+Handled using HMAC signature verification before processing.
+
+### Slow External APIs
+
+Stripe operations are moved to asynchronous consumers instead of blocking the API request.
+
+### Extending the System
+
+The event-driven design allows additional consumers and integrations to be added without tightly coupling them to the API layer.
+
+---
+
+## Design Highlights
+
+### Event-Driven
+
+Kafka provides a durable event-based boundary between system components.
+
+### Asynchronous
+
+External integration work is handled by consumers instead of blocking API requests.
+
+### Idempotent
+
+Processed-event tracking prevents duplicate events from causing repeated state changes.
+
+### Secure
+
+Stripe webhook signatures are verified before events enter the processing pipeline.
+
+### Extensible
+
+Separate topics and consumers make it possible to introduce additional event types and integrations.
+
+### Containerized
+
+The system can be run locally using Docker Compose, including the supporting infrastructure.
+
+---
+
+## What This Project Demonstrates
+
+**Distributed Systems**
+- Event-driven architecture
+- Asynchronous processing
+- Producer-consumer patterns
+- Service decoupling
+- Event-based integration
+
+**Backend Engineering**
+- FastAPI
+- MySQL persistence
+- API validation
+- Kafka producers and consumers
+- External API integration
+
+**Reliability Engineering**
+- Idempotent event processing
+- Duplicate event handling
+- Durable event-driven workflows
+- Failure isolation
+
+**Security**
+- HMAC-based webhook verification
+- Validation of third-party events
+
+**Infrastructure**
+- Docker Compose
+- Kafka
+- MySQL
+- ngrok-based local webhook testing
+
+---
+
+## Future Extensions
+
+Potential extensions for the architecture include:
+
+- Additional third-party integrations
+- More granular event contracts
+- Retry and dead-letter handling
+- Integration health monitoring
+- Event replay tooling
+- Distributed tracing
+- Metrics and dashboards
+- Kubernetes deployment
+
+---
+
+## Takeaway
+
+The main goal of this project was not simply to connect an internal database to Stripe, but to design the integration as a **reliable event-driven system**.
+
+By introducing Kafka between the API and integration workers, and by combining **webhook verification with idempotent event processing**, the architecture establishes clear boundaries between internal state, asynchronous processing, and external systems.
