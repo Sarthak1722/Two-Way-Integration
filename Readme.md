@@ -341,8 +341,8 @@ The request is handled by FastAPI, stored in MySQL, and propagated asynchronousl
 ### Setup
 
 ```bash
-git clone <your-repository-url>
-cd two-way-integration
+git clone https://github.com/Sarthak1722/Two-Way-Integration.git
+cd Two-Way-Integration
 ```
 
 Create the environment file:
