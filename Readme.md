@@ -18,8 +18,6 @@ FastAPI · Apache Kafka · MySQL · Redis · Stripe · Docker · Kubernetes
 
 ---
 
-## Architecture
-<img width="1500" height="760" alt="architecture(1)" src="https://github.com/user-attachments/assets/592c9c1c-71a7-46ac-a1e4-41e3391b38ed" />
 
 ## Table of Contents
 
@@ -93,9 +91,9 @@ This project exists to solve each of those rows correctly and durably.
 
 <div align="center">
 
-![High-Level Architecture](docs/images/architecture.png)
+<img width="1500" height="760" alt="architecture(1)" src="https://github.com/user-attachments/assets/592c9c1c-71a7-46ac-a1e4-41e3391b38ed" />
 
-*High-level system architecture (coming soon)*
+*High-level system architecture*
 
 </div>
 
@@ -424,8 +422,8 @@ Different organizations map to different Stripe accounts, with fully isolated sy
 ### 1. Clone
 
 ```bash
-git clone https://github.com/<your-username>/<repo-name>.git
-cd <repo-name>
+git clone https://github.com/Sarthak1722/Two-Way-Integration.git
+cd Two-Way-Integration
 ```
 
 ### 2. Configure environment
