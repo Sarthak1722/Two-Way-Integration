@@ -87,8 +87,6 @@ This project exists to solve each of those rows correctly and durably.
 
 ## High-Level Architecture
 
-> 📌 **Architecture diagram placeholder.** Replace the image below once the diagram is ready.
-
 <div align="center">
 
 <img width="1500" height="760" alt="architecture(1)" src="https://github.com/user-attachments/assets/592c9c1c-71a7-46ac-a1e4-41e3391b38ed" />
